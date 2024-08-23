@@ -36,6 +36,23 @@
         "leaftl.h": "c",
         "ldftl.h": "c",
         "*.list": "c",
-        "ld-tpftl.h": "c"
+        "ld-tpftl.h": "c",
+        "msix.h": "c",
+        "util.h": "c",
+        "msi.h": "c",
+        "pci.h": "c",
+        "dma.h": "c",
+        "block.h": "c",
+        "block-global-state.h": "c",
+        "block-common.h": "c",
+        "hbitmap.h": "c",
+        "transactions.h": "c",
+        "glib-compat.h": "c",
+        "glib.h": "c",
+        "garray.h": "c",
+        "galloca.h": "c",
+        "gtypes.h": "c",
+        "kvm.h": "c",
+        "lgftl.h": "c"
     }
 }
