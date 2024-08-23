@@ -25,7 +25,7 @@ ftl_thread
 ## DFTL
 + struct cmt mgmt
 + struct trans_write_pointer
-+ process_translation_page_write()
++ process_translation_page_write(): 
 ## LeaFTL
 
 ## Learned FTL

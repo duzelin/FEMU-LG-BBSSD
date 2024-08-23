@@ -93,9 +93,9 @@ static bool delete_tp_hashnode(hash_table *ht, TPnode *tpnode)
 }
 
 static bool create_linear_group(struct ssd *ssd) {
-    struct ssd_channel* channles = ssd->ch;
+    struct ssd_channel* channels = ssd->ch;
 
-    for (int i = 0; i < chanels->nluns; i++) {
-
+    for (int i = 0; i < channels->nluns; i++) {
+        
     }
 }
