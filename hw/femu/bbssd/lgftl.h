@@ -104,17 +104,20 @@ struct nand_page {
 
 struct nand_block {
     struct nand_page *pg;
+    struct ppa blk_ppa;
     bool is_allocated;
     int npgs;
     int ipc; /* invalid page count */
     int vpc; /* valid page count */
     int erase_cnt;
-    int wp; /* current write pointer */
+    QTAILQ_ENTRY(nand_block) entry; /* in free block list */
 };
 
 struct nand_plane {
     struct nand_block *blk;
     int nblks;
+    int nfreeblks;
+    QTAILQ_HEAD(free_blk_list, nand_block) free_blk_list;
 };
 
 struct nand_lun {
@@ -171,10 +174,7 @@ struct ssdparams {
     int blks_per_ch;  /* # of blocks per channel */
     int tt_blks;      /* total # of blocks in the SSD */
 
-    int secs_per_line;
-    int pgs_per_line;
-    int blks_per_line;
-    int tt_lines;
+    int blks_per_lg;  /* length of linear group */
 
     int pls_per_ch;   /* # of planes per channel */
     int tt_pls;       /* total # of planes in the SSD */
@@ -291,6 +291,12 @@ struct lg_write_pointer {
     int blk;
 };
 
+struct lg_allocate_pointer {
+    int ch;
+    int lun;
+    int pl;
+};
+
 /*
 * [action] open -> close: liner-group mapping table -> linear model
 * group inner offset -> real blk id
@@ -319,6 +325,7 @@ struct linear_group {
 struct lg_mgmt {
     struct linear_group* lg_table[SUB_SPACE_NUM + 1]; // start_lpn -> linear groups. !! the additional one is for translation pages
     pqueue_t *victim_line_pq; // closed linear group having invalid page becomes viticm member
+    struct lg_allocate_pointer lg_ap;
     int tt_lg;
     int open_lg_cnt;
     int close_lg_cnt;

@@ -54,5 +54,6 @@
         "gtypes.h": "c",
         "kvm.h": "c",
         "lgftl.h": "c"
-    }
+    },
+    "cmake.sourceDirectory": "/home/dzl/FEMU-LG-BBSSD/meson/test cases/cmake/18 skip include files/subprojects/cmMod"
 }

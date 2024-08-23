@@ -92,10 +92,54 @@ static bool delete_tp_hashnode(hash_table *ht, TPnode *tpnode)
     return true;
 }
 
-static bool create_linear_group(struct ssd *ssd) {
+struct ppa allocate_blk(struct ssd *ssd) {
+    struct lg_allocate_pointer* lg_ap = ssd->lgm.lg_ap;
     struct ssd_channel* channels = ssd->ch;
+    int ch_num = lg_ap->ch;
+    int lun_num = lg_ap->lun;
+    int pl_num = lg_ap->pl;
+    struct nand_plane* target_plane = &channels[ch_num].lun[lun_num].pl[pl_num];
+    struct nand_block* candidate_block = NULL;
 
-    for (int i = 0; i < channels->nluns; i++) {
+    candidate_block = QTAILQ_FIRST(&target_plane->free_blk_list);
+        if (!candidate_block) {
+        return NULL;
+    }
+
+    QTAILQ_REMOVE(&target_plane->free_blk_list, candidate_block, entry);  
+    candidate_block.is_allocated = true;   
+    target_plane->nfreeblks--;
+    return candidate_block->blk_ppa;
+}
+
+static void advance_lg_allocate_pointer(struct ssd *ssd) {
+    struct lg_allocate_pointer* lg_ap = ssd->lgm.lg_ap;
+    struct ssdparams* sp = ssd->sp;
+    lg_ap.ch++;
+    if(lg_ap.ch == sp->nchs) {
+        lg_ap.ch = 0;
+        lg_ap->lun++;
+        if (lg_ap->lun == sp->luns_per_ch) {
+            lg_ap->lun = 0;
+            lg_ap->pl++;
+            if (lg_ap->pl == sp->pls_per_lun) {
+                lg_ap->pl = 0;
+            }
+        }
+    }
+}
+
+struct ppa* allocate_blks_for_lg(struct ssd *ssd) {
+    struct ssdparams* sp = ssd->sp;
+    struct ssd_channel* channels = ssd->ch;
+    struct lg_mgmt* lgm= ssd->lgm;
+
+    int lg_len = sp->blks_per_lg;
+    struct ppa* blks = g_malloc0(sizeof(struct ppa) * lg_len);
+    for (int i = 0; i < lg_len; i++) {
+        // add one blk from current lun to new linear group
+        blks[i] = allocate_blk(ssd);
+        advance_lg_allocate_pointer(ssd);
         
     }
 }
