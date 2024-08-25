@@ -53,7 +53,16 @@
         "galloca.h": "c",
         "gtypes.h": "c",
         "kvm.h": "c",
-        "lgftl.h": "c"
+        "lgftl.h": "c",
+        "math.h": "c",
+        "stdio.h": "c",
+        "time.h": "c",
+        "array": "c",
+        "compare": "c",
+        "functional": "c",
+        "ratio": "c",
+        "type_traits": "c",
+        "utility": "c"
     },
     "cmake.sourceDirectory": "/home/dzl/FEMU-LG-BBSSD/meson/test cases/cmake/18 skip include files/subprojects/cmMod"
 }

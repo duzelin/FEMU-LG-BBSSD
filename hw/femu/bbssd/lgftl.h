@@ -106,6 +106,7 @@ struct nand_block {
     struct nand_page *pg;
     struct ppa blk_ppa;
     bool is_allocated;
+    bool is_bad;
     int npgs;
     int ipc; /* invalid page count */
     int vpc; /* valid page count */
@@ -188,50 +189,6 @@ struct ssdparams {
     bool enable_select_prefetch;
 };
 
-typedef struct line {
-    int id;  /* line id, the same as corresponding block id */
-    int ipc; /* invalid page count in this line */
-    int vpc; /* valid page count in this line */
-    QTAILQ_ENTRY(line) entry; /* in either {free,victim,full} list */
-    /* position in the priority queue for victim lines */
-    size_t pos;
-
-    int type;
-} line;
-
-/* wp: record next write addr */
-struct write_pointer {
-    struct line *curline;
-    int ch;
-    int lun;
-    int pg;
-    int blk;
-    int pl;
-};
-
-/* wp: record next translation page write addr */
-struct trans_write_pointer {
-    struct line *curline;
-    int ch;
-    int lun;
-    int pg;
-    int blk;
-    int pl;
-};
-
-struct line_mgmt {
-    struct line *lines;
-    /* free line list, we only need to maintain a list of blk numbers */
-    QTAILQ_HEAD(free_line_list, line) free_line_list;
-    pqueue_t *victim_line_pq;
-    //QTAILQ_HEAD(victim_line_list, line) victim_line_list;
-    QTAILQ_HEAD(full_line_list, line) full_line_list;
-    int tt_lines;
-    int free_line_cnt;
-    int victim_line_cnt;
-    int full_line_cnt;
-};
-
 struct nand_cmd {
     int type;
     int cmd;
@@ -243,12 +200,22 @@ struct nand_cmd {
  * 
  */
 typedef struct cmt_entry {
-    uint64_t lpn;
-    uint64_t ppn;
+    int type;
     int dirty;
-    // int hotness;
-    QTAILQ_ENTRY(cmt_entry) entry;
     bool prefetch;
+    union {
+        struct {
+            uint64_t lpn;
+            uint64_t ppn;
+        } single;
+        struct {
+            float slope;
+            float intercept;
+            uint32_t start_lpn_offset;
+            uint32_t lg_id;
+        } lm;
+    };
+    QTAILQ_ENTRY(cmt_entry) entry;
     uint64_t next_avail_time;
     struct cmt_entry *next;    /* for hash */
 } cmt_entry;
@@ -256,9 +223,7 @@ typedef struct cmt_entry {
 typedef struct TPnode {
     uint64_t tvpn;
     int cmt_entry_cnt;
-    // double hotness;  /* The paper didn't explain how to operate and set hotness */
     QTAILQ_ENTRY(TPnode) lru_entry;
-    //QTAIQ_HEAD 为热度最低的
     QTAILQ_HEAD(cmt_entry_list, cmt_entry) cmt_entry_list;
     struct TPnode *next;   /* for hash */
     short exist_ent[ENT_PER_TP];
@@ -312,10 +277,11 @@ struct linear_group {
     size_t pos;
 
     int type;
-    struct ppa* blks; // the vector recording blks' addresses
+    struct ppa *blks; // the vector recording blks' addresses
+    uint16_t *reverse_lpns;
     struct lg_write_pointer lg_wp; // per linear group write pointer
 
-    struct linear_group* next; // for the chain of the same sub space
+    QTAILQ_ENTRY(linear_group) entry; // for the chain of the same sub space
 };
 
 /*
@@ -323,7 +289,7 @@ struct linear_group {
 * check lun free blk list 
 */
 struct lg_mgmt {
-    struct linear_group* lg_table[SUB_SPACE_NUM + 1]; // start_lpn -> linear groups. !! the additional one is for translation pages
+    QTAILQ_HEAD(lg_list, linear_group) lg_list[SUB_SPACE_NUM + 1]; // start_lpn -> linear groups. !! the additional one is for translation pages
     pqueue_t *victim_line_pq; // closed linear group having invalid page becomes viticm member
     struct lg_allocate_pointer lg_ap;
     int tt_lg;
@@ -349,7 +315,6 @@ struct ssd {
     
     struct cmt_mgmt cm;
     struct ppa *gtd;
-    struct trans_write_pointer twp;
 
     /* lockless ring for communication with NVMe IO thread */
     struct rte_ring **to_ftl;

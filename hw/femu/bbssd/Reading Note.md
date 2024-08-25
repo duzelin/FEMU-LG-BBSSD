@@ -8,7 +8,7 @@ enum user/gc io
 enum sector/page state
 enum FEMU related settings
 struct ppa
-channel -> lun -> plane -> block -> page -> sectors
+channel -> lun -> plane ->git  block -> page -> sectors
 struct ssdparams
 struct write pointer
 struct line(block) mgmt
