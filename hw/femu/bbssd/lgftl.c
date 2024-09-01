@@ -2,95 +2,154 @@
 
 static void *ftl_thread(void *arg);
 
+/* --- linear regression functions ---*/
+
+typedef struct linear_model_t {
+    float w;
+    float b;
+} linear_model_t;
+
+typedef struct ransac_t {
+    uint32_t samplesize;
+    float maxerror;
+    
+    uint32_t bestfit_cnt;
+    linear_model_t bestmodel;
+} ransac_t;
+
+static void LinearRegression(uint32_t *x, uint32_t *y, int num, linear_model_t *lm) {  
+        float xsum=0, ysum=0, xxsum=0, xysum=0;  
+        for(int i = 0; i < num; i++) {  
+            xxsum += x[i]*x[i];  
+            xsum += x[i];  
+            xysum += x[i]*y[i];  
+            ysum += y[i];  
+        }  
+        lm->w = (xysum * num - xsum * ysum) / (xxsum * num - xsum * xsum);   
+        lm->b = (ysum - lm->w * xsum) / num;  
+}  
+
+static void EvaluateError(uint32_t *x, uint32_t *y, int num, linear_model_t *lm, float *error) {
+    for (int i = 0; i < num; i++) {
+        float estimated_y = lm->w * x[i] + lm->b;
+        error[i] = estimated_y - y[i];
+    }
+}
+
+static uint32_t IterationNum(float iratio, uint32_t samplesize, float successrate) {
+    return log(1 - successrate) / log(1 - pow(iratio, samplesize));
+}
+
+void RANSAC (uint32_t *x, uint32_t *y, int num, ransac_t *model) {
+    /* init */
+    model->bestfit_cnt = 0;
+    uint32_t *sample_x = g_malloc0(sizeof(uint32_t)); 
+}
+
+
 /* process hash */
-static inline uint64_t cmt_hash(uint64_t lpn)
-{
+static inline uint32_t cmt_hash(uint64_t lpn) {
     return lpn % CMT_HASH_SIZE;
 }
 
-static inline uint64_t tp_hash(uint64_t tvpn)
-{
+static inline uint32_t tp_hash(uint64_t tvpn) {
     return tvpn % TP_HASH_SIZE;
 }
 
-static struct cmt_entry* find_hash_entry(hash_table *ht, uint64_t lpn)
-{
-    uint64_t pos = cmt_hash(lpn);
-    cmt_entry *entry = ht->cmt_table[pos];
-    while (entry != NULL && entry->single.lpn != lpn) {
-        entry = entry->next;
-    }
-    return entry;
+static inline uint32_t subspace_idx (uint64_t lpn) {
+    uint64_t tvpn = lpn / ENT_PER_TP;
+    uint32_t sub_space_idx = tvpn / SUB_SPACE_SIZE;
+    return sub_space_idx;
 }
 
-static struct TPnode* find_hash_tpnode(hash_table *ht, uint64_t tvpn)
-{
-    uint64_t pos = tp_hash(tvpn);
-    TPnode *tpnode = ht->tp_table[pos];
-    while (tpnode != NULL && tpnode->tvpn != tvpn) {
-        tpnode = tpnode->next;
+static uint64_t virtual_tpage_num (struct ppa *gtd, uint64_t lpn) {
+    uint64_t gtd_offset = lpn / ENT_PER_TP;
+    while (gtd_offset && gtd[gtd_offset].ppa == gtd[gtd_offset - 1].ppa) {
+        gtd_offset--;
+    }
+    return gtd_offset;
+}
+
+static struct cmt_entry *find_cmt_entry(struct cmt_mgmt *cm, uint64_t lpn) {
+    uint32_t pos = cmt_hash(lpn);
+    cmt_entry *mapping_entry = NULL;
+    QTAILQ_FOREACH(mapping_entry, &cm->hash_mapping_table[pos], h_entry) {
+        bool is_found = false;
+        switch(mapping_entry->type){
+            case SINGLE_MAPPING:
+                if (mapping_entry->single.lpn == lpn) {
+                    is_found = true;
+                }
+                break;
+            case LINEAR_MODEL:
+                break;
+        }
+        if (is_found) {
+            break;
+        }
+    }
+    return mapping_entry;
+}
+
+static struct TPnode *find_tpnode(struct cmt_mgmt *cm, struct ppa *gtd, uint64_t lpn) {
+    uint64_t tvpn = virtual_tpage_num(gtd, lpn);
+    uint32_t pos = tp_hash(tvpn);
+    TPnode *tpnode = NULL;
+    QTAILQ_FOREACH(tpnode, &cm->hash_tp_table[pos], h_entry) {
+        if (tpnode->tvpn == tvpn) {
+            break;
+        }
     }
     return tpnode;
 }
 
-static void insert_cmt_hashtable(hash_table *ht, cmt_entry *entry) 
-{
-    uint64_t pos = cmt_hash(entry->single.lpn);
-    entry->next = ht->cmt_table[pos];
-    ht->cmt_table[pos] = entry;
-}
-
-static void insert_tp_hashtable(hash_table *ht, TPnode *tpnode) 
-{
-    uint64_t pos = tp_hash(tpnode->tvpn);
-    tpnode->next = ht->tp_table[pos];
-    ht->tp_table[pos] = tpnode;
-}
-
-static bool delete_cmt_hashnode(hash_table *ht, cmt_entry *entry)
-{
-    uint64_t pos = cmt_hash(entry->single.lpn);
-    cmt_entry *tmp_entry = ht->cmt_table[pos], *pre_entry;
-    if (tmp_entry == entry) {
-        ht->cmt_table[pos] = tmp_entry->next;
-        tmp_entry->next = NULL;
-    } else {
-        pre_entry = tmp_entry;
-        tmp_entry = tmp_entry->next;
-        while (tmp_entry != NULL && tmp_entry != entry) {
-            pre_entry = tmp_entry;
-            tmp_entry = tmp_entry->next;
+static struct cmt_entry *find_lm_entry(struct cmt_mgmt *cm, struct ppa *gtd, uint64_t lpn) {
+    uint32_t offset_in_subspace = lpn % SUB_SPACE_SIZE;
+    struct TPnode *tpnode = find_tpnode(cm, gtd, lpn);
+    struct cmt_entry *lm = NULL;
+    if (tpnode) {
+        QTAILQ_FOREACH(lm, &tpnode->lm_list, entry) {
+            if (lm->lm.start_lpn_offset == offset_in_subspace) {
+                break;
+            }
         }
-        if (tmp_entry == NULL)
-            return false;
-        pre_entry->next = tmp_entry->next;
-        tmp_entry->next = NULL;
     }
-    return true;
+    return lm;
 }
 
-static bool delete_tp_hashnode(hash_table *ht, TPnode *tpnode)
-{
-    uint64_t pos = tp_hash(tpnode->tvpn);
-    TPnode *tmp_tp = ht->tp_table[pos], *pre_tp;
-    // The single tpnode in the target hash slot.
-    if (tmp_tp == tpnode) {
-        ht->tp_table[pos] = tmp_tp->next;
-        tmp_tp->next = NULL;
-    } else {
-        pre_tp = tmp_tp;
-        tmp_tp = tmp_tp->next;
-        while (tmp_tp != NULL && tmp_tp != tpnode) {
-            pre_tp = tmp_tp;
-            tmp_tp = tmp_tp->next;
-        }
-        if (tmp_tp == NULL)
-            return false;
-        pre_tp->next = tmp_tp->next;
-        tmp_tp->next = NULL;
-    }
-    return true;
+static void insert_cmt_entry(struct cmt_mgmt *cm, cmt_entry *mapping_entry) {
+    uint32_t pos = cmt_hash(mapping_entry->single.lpn);
+    QTAILQ_INSERT_HEAD(&cm->hash_mapping_table[pos], mapping_entry, h_entry);
 }
+
+static void insert_tp_hashtable(struct cmt_mgmt *cm, TPnode *tpnode) {
+    uint32_t pos = tp_hash(tpnode->tvpn);
+    QTAILQ_INSERT_HEAD(&cm->hash_tp_table[pos], tpnode, h_entry);
+}
+
+static void remove_tpnode(struct cmt_mgmt *cm, TPnode *tpnode) {
+    ftl_assert(tpnode->cmt_entry_cnt == 0 && lm_cnt == 0);
+    QTAILQ_REMOVE(&cm->TPnode_list, tpnode, lru_entry); /* detach from the lru list*/
+    uint32_t pos = tp_hash(tpnode->tvpn);
+    QTAILQ_REMOVE(&cm->hash_tp_table[pos], tpnode, h_entry); /* detach from the hash table */
+    cm->live_tpnode_cnt--;
+    cm->free_cmt_entry_cnt++;
+}
+
+static void reclaim_cmt_entry(struct cmt_mgmt *cm, TPnode *tpnode, cmt_entry *mapping_entry) {
+    QTAILQ_REMOVE(&tpnode->cmt_entry_list, mapping_entry, entry); /* detach from the lru list*/
+    tpnode->cmt_entry_cnt--;
+    uint64_t pos = cmt_hash(mapping_entry->single.lpn);
+    QTAILQ_REMOVE(&cm->hash_tp_table[pos], mapping_entry, h_entry); /* detach from the hash table */
+    cm->used_cmt_entry_cnt--;
+    cm->free_cmt_entry_cnt++;
+    QTAILQ_INSERT_HEAD(&cm->free_cmt_entry_list, mapping_entry, entry);
+    if (tpnode->cmt_entry_cnt == 0 && tpnode->lm_cnt == 0) {
+        remove_tpnode(cm, tpnode);
+    }
+}
+
+/* --- linear group related functions ---*/
 
 struct ppa get_blk(struct ssd *ssd) {
     struct lg_allocate_pointer *lg_ap = &ssd->lgm.lg_ap;
@@ -166,5 +225,9 @@ struct linear_group* create_lg(struct ssd *ssd, int sub_space_id, int type) {
 }
 
 void close_lg(struct ssd *ssd, struct linear_group *lg) {
-    
+    uint32_t start_offset = lg->start_offset;
+    uint32_t final_offset = lg->lg_wp.pg * lg->len + lg->lg_wp.blk;
+    for (int i = start_offset; i < final_offset; i++) {
+        
+    }
 }

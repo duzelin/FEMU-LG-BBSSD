@@ -62,7 +62,9 @@
         "functional": "c",
         "ratio": "c",
         "type_traits": "c",
-        "utility": "c"
+        "utility": "c",
+        "cmath": "cpp",
+        "stdint.h": "c"
     },
     "cmake.sourceDirectory": "/home/dzl/FEMU-LG-BBSSD/meson/test cases/cmake/18 skip include files/subprojects/cmMod"
 }

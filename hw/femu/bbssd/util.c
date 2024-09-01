@@ -1,8 +1,8 @@
 #pragma GCC push_options
 #pragma GCC optimize(0)
-#include "../nvme.h"
 
-#include<stdio.h>
+#include <stdint.h>
+#include <stdio.h>
 #include "util.h"
 
 
@@ -143,7 +143,6 @@ int LeastSquareNew(uint64_t *x, uint64_t *y, int num, float *w, float *b) {
         //b = (t4 - a*t2) / num;  
         *b = (t1*t4 - t2*t3) / (t1*num - t2*t2);  
 		// printf("training result: %f %f\n", *w, *b);
-		
 		int train_success_num = 0;
 
 		return train_success_num;

@@ -9,7 +9,8 @@
 
 #define CMT_HASH_SIZE (24593ULL)
 #define TP_HASH_SIZE (24593ULL)
-#define SUB_SPACE_NUM (512ULL)
+#define LG_HASH_SIZE (24593ULL)
+#define SUB_SPACE_SIZE (1ULL << 28) /* size in term of bytes, 256MB */
 
 #define ENT_PER_TP (512ULL)
 
@@ -52,6 +53,11 @@ enum {
     NONE = 0,
     DATA = 1,
     TRANS = 2
+};
+
+enum {
+    SINGLE_MAPPING = 0,
+    LINEAR_MODEL = 1
 };
 
 enum {
@@ -182,6 +188,8 @@ struct ssdparams {
 
     int tt_luns;      /* total # of LUNs in the SSD */
 
+    int tt_subspaces;  /* total # of sub spaces in the SSD */
+
     int ents_per_pg;
     int tt_cmt_size;
     int tt_gtd_size;
@@ -215,24 +223,20 @@ typedef struct cmt_entry {
             uint32_t lg_id;
         } lm;
     };
-    QTAILQ_ENTRY(cmt_entry) entry;
-    uint64_t next_avail_time;
-    struct cmt_entry *next;    /* for hash */
+    QTAILQ_ENTRY(cmt_entry) entry; /* for per-TPnode list or free list*/
+    QTAILQ_ENTRY(cmt_entry) h_entry; /* for hash */
+    uint64_t next_avail_time; 
 } cmt_entry;
 
 typedef struct TPnode {
     uint64_t tvpn;
     int cmt_entry_cnt;
+    int lm_cnt;
     QTAILQ_ENTRY(TPnode) lru_entry;
-    QTAILQ_HEAD(cmt_entry_list, cmt_entry) cmt_entry_list;
-    struct TPnode *next;   /* for hash */
-    short exist_ent[ENT_PER_TP];
+    QTAILQ_ENTRY(TPnode) h_entry;
+    QTAILQ_HEAD(lm_list, cmt_entry) lm_list; /* cmt entry - head insert */
+    QTAILQ_HEAD(cmt_entry_list, cmt_entry) cmt_entry_list; /* cmt entry - head insert */
 } TPnode;
-
-typedef struct hash_table {
-    cmt_entry *cmt_table[CMT_HASH_SIZE];
-    TPnode *tp_table[TP_HASH_SIZE];
-}hash_table;
 
 /*
 * The cached mapping table is to serve unlinaer mappings
@@ -246,9 +250,12 @@ struct cmt_mgmt {
     int tt_entries;
     int free_cmt_entry_cnt;
     int used_cmt_entry_cnt;
+    int live_tpnode_cnt;
     // use for selective prefetching;
     int counter;
-    struct hash_table ht;
+
+    QTAILQ_HEAD(cmt_hash_table, cmt_entry) hash_mapping_table[CMT_HASH_SIZE];
+    QTAILQ_HEAD(tp_table, TPnode) hash_tp_table[TP_HASH_SIZE]; /* virtual translation page number -> TPnode*/
 };
 
 struct lg_write_pointer {
@@ -279,6 +286,7 @@ struct linear_group {
     int type;
     struct ppa *blks; // the vector recording blks' addresses
     uint16_t *reverse_lpns;
+    uint32_t start_offset; /* the start offset of un trained records */
     struct lg_write_pointer lg_wp; // per linear group write pointer
 
     QTAILQ_ENTRY(linear_group) entry; // for the chain of the same sub space
@@ -289,7 +297,7 @@ struct linear_group {
 * check lun free blk list 
 */
 struct lg_mgmt {
-    QTAILQ_HEAD(lg_list, linear_group) lg_list[SUB_SPACE_NUM + 1]; // start_lpn -> linear groups. !! the additional one is for translation pages
+    QTAILQ_HEAD(lg_list, linear_group) lg_list[LG_HASH_SIZE]; // hash(id) -> linear groups. !! the additional one is for translation pages
     pqueue_t *victim_line_pq; // closed linear group having invalid page becomes viticm member
     struct lg_allocate_pointer lg_ap;
     int tt_lg;
