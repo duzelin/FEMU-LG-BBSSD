@@ -36,14 +36,53 @@ static void EvaluateError(uint32_t *x, uint32_t *y, int num, linear_model_t *lm,
     }
 }
 
+static uint32_t CntInliers(float *error, uint32_t num, float maxerror) {
+    uint32_t inliers = 0;
+    for (uint32_t i = 0; i < num; i++) {
+        inliers += (error[i] < maxerror ? 1 : 0);
+    }
+    return inliers;
+}
+
 static uint32_t IterationNum(float iratio, uint32_t samplesize, float successrate) {
     return log(1 - successrate) / log(1 - pow(iratio, samplesize));
 }
 
-void RANSAC (uint32_t *x, uint32_t *y, int num, ransac_t *model) {
+static void SampleTrainingSet(uint32_t *x, uint32_t *y, uint32_t num, uint32_t samplesize, uint32_t *s_x, uint32_t *s_y) {
+    srand(time(NULL));
+    for (uint32_t s = 0; s < samplesize; s++) {
+        uint32_t r = rand() % num;
+        s_x[s] = x[r];
+        s_y[s] = y[r];
+    }
+}
+
+static void RANSAC_fit (uint32_t *x, uint32_t *y, int num, ransac_t *model) {
     /* init */
     model->bestfit_cnt = 0;
-    uint32_t *sample_x = g_malloc0(sizeof(uint32_t)); 
+    uint32_t *sample_x = g_malloc(sizeof(uint32_t) * model->samplesize); 
+    uint32_t *sample_y = g_malloc(sizeof(uint32_t) * model->samplesize);
+    float *error = g_malloc(sizeof(float) * model->samplesize);
+    
+    uint32_t numiteration = IterationNum(0.7, model->samplesize, 0.99);
+    uint32_t iter = 0;
+    while (iter++ < numiteration) {
+        // create smapled data
+        SampleTrainingSet(x, y, num, model->samplesize, sample_x, sample_y);
+        // fit the modle on sampled data
+        linear_model_t tmp_lm;
+        LinearRegression(sample_x, sample_y, model->samplesize, &tmp_lm);
+        // evaluate the model
+        EvaluateError(x, y, num, &tmp_lm, error);
+        uint32_t inliers = CntInliers(error, num, model->maxerror);
+        if (inliers > model->bestfit_cnt) {
+            model->bestmodel = tmp_lm;
+        }
+    }
+    
+    g_free(sample_x);
+    g_free(sample_y);
+    g_free(error);
 }
 
 

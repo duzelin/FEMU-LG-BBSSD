@@ -285,7 +285,7 @@ struct linear_group {
 
     int type;
     struct ppa *blks; // the vector recording blks' addresses
-    uint16_t *reverse_lpns;
+    uint16_t *reverse_lpns; /* TODO: discard the additional reverse lpn records */
     uint32_t start_offset; /* the start offset of un trained records */
     struct lg_write_pointer lg_wp; // per linear group write pointer
 
