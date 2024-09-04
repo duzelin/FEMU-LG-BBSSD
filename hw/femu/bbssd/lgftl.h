@@ -1,5 +1,5 @@
-#ifndef __FEMU_TPFTL_H
-#define __FEMU_TPFTL_H
+#ifndef __FEMU_LGFTL_H
+#define __FEMU_LGFTL_H
 
 #include "../nvme.h"
 
@@ -98,6 +98,25 @@ struct ppa {
 
         uint64_t ppa;
     };
+};
+
+#define LGID_BITS   (32)
+#define LG_OFFSET   (32)
+
+typedef struct vppa {
+    union {
+        struct {
+            uint64_t lg_id : LGID_BITS;
+            uint64_t lg_offset : LG_OFFSET;
+        } g;
+
+        uint64_t vppa;
+    };
+} vppa;
+
+struct gtd_entry {
+    vppa translation_ppa;
+    bool is_linear;
 };
 
 typedef int nand_sec_status_t;
@@ -214,7 +233,7 @@ typedef struct cmt_entry {
     union {
         struct {
             uint64_t lpn;
-            uint64_t ppn;
+            vppa ppn;
         } single;
         struct {
             float slope;
@@ -234,8 +253,9 @@ typedef struct TPnode {
     int lm_cnt;
     QTAILQ_ENTRY(TPnode) lru_entry;
     QTAILQ_ENTRY(TPnode) h_entry;
-    QTAILQ_HEAD(lm_list, cmt_entry) lm_list; /* cmt entry - head insert */
-    QTAILQ_HEAD(cmt_entry_list, cmt_entry) cmt_entry_list; /* cmt entry - head insert */
+    QTAILQ_HEAD(lm_list, cmt_entry) lm_list;
+    QTAILQ_HEAD(cold_list, cmt_entry) cold_list; /* cmt entry - head insert */
+    QTAILQ_HEAD(hot_list, cmt_entry) hot_list; /* cmt entry - head insert */
 } TPnode;
 
 /*
@@ -255,7 +275,7 @@ struct cmt_mgmt {
     int counter;
 
     QTAILQ_HEAD(cmt_hash_table, cmt_entry) hash_mapping_table[CMT_HASH_SIZE];
-    QTAILQ_HEAD(tp_table, TPnode) hash_tp_table[TP_HASH_SIZE]; /* virtual translation page number -> TPnode*/
+    QTAILQ_HEAD(tp_table, TPnode) hash_tp_table[TP_HASH_SIZE]; /* virtual translation page number (tvpn) -> TPnode*/
 };
 
 struct lg_write_pointer {
@@ -269,14 +289,21 @@ struct lg_allocate_pointer {
     int pl;
 };
 
+struct reverse_tvpn_list {
+    uint64_t tvpn;
+    QTAILQ_ENTRY(reverse_tvpn_list) next;
+};
+
 /*
 * [action] open -> close: liner-group mapping table -> linear model
 * group inner offset -> real blk id
 * create liner group: allocate blocks
 */
+
 struct linear_group {
     bool is_open;
     int id; // the unique linear group id
+    int subspace_id;
     int len; // number of blks
     int ipc; /* invalid page count in this line */
     int vpc; /* valid page count in this line */
@@ -285,11 +312,11 @@ struct linear_group {
 
     int type;
     struct ppa *blks; // the vector recording blks' addresses
-    uint16_t *reverse_lpns; /* TODO: discard the additional reverse lpn records */
     uint32_t start_offset; /* the start offset of un trained records */
     struct lg_write_pointer lg_wp; // per linear group write pointer
 
-    QTAILQ_ENTRY(linear_group) entry; // for the chain of the same sub space
+    QTAILQ_ENTRY(linear_group) h_entry; 
+    QTAILQ_HEAD(reverse_tvpns, reverse_tvpn_list) reverse_tvpns;
 };
 
 /*
@@ -322,7 +349,7 @@ struct ssd {
     struct lg_mgmt lgm;
     
     struct cmt_mgmt cm;
-    struct ppa *gtd;
+    struct gtd_entry *gtd;
 
     /* lockless ring for communication with NVMe IO thread */
     struct rte_ring **to_ftl;
