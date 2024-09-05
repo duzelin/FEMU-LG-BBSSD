@@ -212,6 +212,10 @@ static struct cmt_entry *find_lm_entry(struct cmt_mgmt *cm, struct gtd_entry *gt
     return lm;
 }
 
+static cmt_entry *get_free_cmt_entry(struct cmt_mgmt *cm) {
+    QTAILQ_FIRST(&cm->free_cmt_entry_list);
+}
+
 static void insert_cmt_entry(struct cmt_mgmt *cm, cmt_entry *mapping_entry) {
     uint32_t pos = cmt_hash(mapping_entry->single.lpn);
     QTAILQ_INSERT_HEAD(&cm->hash_mapping_table[pos], mapping_entry, h_entry);
@@ -339,7 +343,7 @@ void close_lg(struct ssd *ssd, struct linear_group *lg) {
         struct cmt_entry *mapping_entry = NULL;
         QTAILQ_FOREACH(mapping_entry, &tpnode->hot_list, entry) {
             lpn_offset[traindata_idx] = mapping_entry->single.lpn - base_lpn;
-            ppn_offset[traindata_idx] = mapping_entry->single.ppn.g.lg_offset;
+            ppn_offset[traindata_idx] = mapping_entry->single.virtual_ppa.g.lg_offset;
             traindata_idx++;
         }
     }
@@ -350,18 +354,31 @@ void close_lg(struct ssd *ssd, struct linear_group *lg) {
     struct ransac_t model = {.bestfit_cnt = 0, .maxerror = 1.0f, .samplesize = num/10};
     RANSAC_fit(lpn_offset, ppn_offset, num, &model);
 
-    // mark the precise points in gtd-granularity
-    // get the model range [start, start+len)
     linear_model_t *lm = &model.bestmodel;
-    uint32_t lm_start = 0, lm_len = 0; 
+    uint32_t lm_start_offset = 0, lm_len = 0; 
+
+    /* update the outliers record in GTD
+    * two types outliers: (1) outside the model (2) inside the model but unprecise
+    */
+    uint32_t base_gtd_idx = base_lpn / ENT_PER_TP;
     for (uint32_t i = 0; i < num; i++) {
-        if (roundf(lm->w * lpn_offset[i] + lm->b) == ppn_offset[i]) {
-            precise_bitmap[i] = true;          
+        uint32_t gtd_idx = lpn_offset[i] / ENT_PER_TP + base_gtd_idx; // calculate the gtd idx for current entry;
+        if (roundf(lm->w * lpn_offset[i] + lm->b) == ppn_offset[i]) { // precise point
+            // remove outlier record, if exist
         } else {
-            precise_bitmap[i] = false;
-        };
-    }
-    for (uint32_t i = 0; i < num; i++) {
-        if ()
+            // insert outlier record
+        }
+        if (i == 0) {
+            lm_start_offset = 0;
+        }    
+        if (i == num-1 || lpn_offset[i] != lpn_offset[i+1]) {
+            lm_len = i - lm_start_offset;
+            // segment the model
+            
+            lm_start_offset = i + 1;
+        }
+        if (lm_len > 0) {
+
+        }
     }
 }

@@ -114,9 +114,14 @@ typedef struct vppa {
     };
 } vppa;
 
+struct outlier {
+    uint64_t lpn;
+    QTAILQ_ENTRY(outlier) entry; // for per-gtd chain
+};
+
 struct gtd_entry {
     vppa translation_ppa;
-    bool is_linear;
+    QTAILQ_HEAD(outliers_list, outlier) outliers_list; // outliers record for each gtd entry
 };
 
 typedef int nand_sec_status_t;
@@ -233,7 +238,7 @@ typedef struct cmt_entry {
     union {
         struct {
             uint64_t lpn;
-            vppa ppn;
+            vppa virtual_ppa;
         } single;
         struct {
             float slope;
