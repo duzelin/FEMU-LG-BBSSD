@@ -10,9 +10,11 @@
 #define CMT_HASH_SIZE (24593ULL)
 #define TP_HASH_SIZE (24593ULL)
 #define LG_HASH_SIZE (24593ULL)
-#define SUB_SPACE_SIZE (1ULL << 28) /* size in term of bytes, 256MB */
+#define OUTLIER_HASH_SIZE (32ULL)
+#define SUB_SPACE_SIZE (1ULL << 16) /* size in term of logical pages, 256MB */
 
 #define ENT_PER_TP (512ULL)
+#define ENT_PER_MP (256ULL)
 
 enum {
     NAND_READ =  0,
@@ -58,6 +60,11 @@ enum {
 enum {
     SINGLE_MAPPING = 0,
     LINEAR_MODEL = 1
+};
+
+enum {
+    PREFETCH = 0,
+    READY = 1
 };
 
 enum {
@@ -114,14 +121,16 @@ typedef struct vppa {
     };
 } vppa;
 
-struct outlier {
-    uint64_t lpn;
-    QTAILQ_ENTRY(outlier) entry; // for per-gtd chain
-};
+typedef struct outlier {
+    uint16_t lpn_offset;
+    QTAILQ_ENTRY(outlier) h_entry; // for per-gtd hash
+} outlier;
 
 struct gtd_entry {
     vppa translation_ppa;
-    QTAILQ_HEAD(outliers_list, outlier) outliers_list; // outliers record for each gtd entry
+    uint16_t outliers_cnt;
+    uint16_t lm_cnt;
+    QTAILQ_HEAD(outliers_hash_table, outlier) outliers_hash_table[OUTLIER_HASH_SIZE]; // outliers record for each gtd entry
 };
 
 typedef int nand_sec_status_t;
@@ -237,13 +246,13 @@ typedef struct cmt_entry {
     bool prefetch;
     union {
         struct {
-            uint64_t lpn;
+            uint64_t lpn; // full lpn
             vppa virtual_ppa;
         } single;
         struct {
             float slope;
             float intercept;
-            uint32_t start_lpn_offset;
+            uint32_t start_lpn_offset; // subspace aligned
             uint32_t lg_id;
         } lm;
     };
@@ -253,12 +262,11 @@ typedef struct cmt_entry {
 } cmt_entry;
 
 typedef struct TPnode {
-    uint64_t tvpn;
-    int cmt_entry_cnt;
-    int lm_cnt;
+    uint32_t tvpn; // start gtd idx
+    uint32_t covered_gtd_len;
     QTAILQ_ENTRY(TPnode) lru_entry;
     QTAILQ_ENTRY(TPnode) h_entry;
-    QTAILQ_HEAD(lm_list, cmt_entry) lm_list;
+    QTAILQ_HEAD(lm_list, cmt_entry) lm_list; /* start lpn sorted */
     QTAILQ_HEAD(cold_list, cmt_entry) cold_list; /* cmt entry - head insert */
     QTAILQ_HEAD(hot_list, cmt_entry) hot_list; /* cmt entry - head insert */
 } TPnode;
@@ -267,17 +275,16 @@ typedef struct TPnode {
 * The cached mapping table is to serve unlinaer mappings
 */
 struct cmt_mgmt {
-    cmt_entry *cmt_entries;
-    QTAILQ_HEAD(free_cmt_entry_list, cmt_entry) free_cmt_entry_list;
     //QTAIQ_HEAD 为热度最高的
     QTAILQ_HEAD(TPnode_list, TPnode) TPnode_list;
     int tt_TPnodes;
     int tt_entries;
     int free_cmt_entry_cnt;
-    int used_cmt_entry_cnt;
+    int live_cmt_entry_cnt;
     int live_tpnode_cnt;
     // use for selective prefetching;
     int counter;
+    int live_outliers_cnt;
 
     QTAILQ_HEAD(cmt_hash_table, cmt_entry) hash_mapping_table[CMT_HASH_SIZE];
     QTAILQ_HEAD(tp_table, TPnode) hash_tp_table[TP_HASH_SIZE]; /* virtual translation page number (tvpn) -> TPnode*/
